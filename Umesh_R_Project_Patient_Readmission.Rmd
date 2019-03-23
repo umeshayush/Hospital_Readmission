@@ -1,0 +1,262 @@
+---
+title: "R_Project_Patient_Readmission_Umesh"
+author: "Umesh B sangule"
+date: "December 13, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+##  Problem Statement
+
+Develop a statistical model to predict Patient Readmission using the dataset given "readmitted" is the dependent variable that needs to be predicted.
+```{r}
+library(dplyr)
+library(corrplot)
+library(ggplot2)
+library(caret)
+library(kernlab)
+library(rpart)
+library(randomForest)
+library(e1071)
+```
+
+```{r}
+Umesh <- na.omit(read.csv("diabetes_allcols.csv", header = T, na.strings = c("","?",NA)))
+summary(Umesh)
+str(Umesh)
+```
+
+We will find relation of dependant variable with other variables and can drop the variables which are irrelevant and variables which provides same imformation which is not helpful for checking variance between them, so here we have drop variables from original dataset
+
+```{r}
+library(dplyr)
+Umesh_New_Red <- select(Umesh, -c(encounter_id, patient_nbr, examide,citoglipton,weight, payer_code, medical_specialty))
+```
+
+
+# cleaning NA's
+
+```{r}
+Umesh_New_Red[Umesh_New_Red == 'Unknown/Invalid'] <- NA
+Umesh_New_Red <- Umesh_New_Red[Umesh_New_Red$race != "?",] 
+Umesh_New_Red <- Umesh_New_Red[Umesh_New_Red$diag_1 != "?",]
+Umesh_New_Red <- Umesh_New_Red[Umesh_New_Red$diag_2 != "?",]
+Umesh_New_Red <- Umesh_New_Red[Umesh_New_Red$diag_3 != "?",]
+data2 <- Umesh_New_Red
+```
+
+
+
+After, reducing dataset the correlation between the varibles is found using the correlation plot
+
+```{r}
+numeric_data<-select_if(data2,is.numeric)
+c <- cor(numeric_data)
+corrplot(c)
+```
+  
+
+"Readmitted Patient" is a "Dependent Variable".
+
+```{r}
+barplot(table(data2$readmitted))
+```
+
+```{r}
+prop.table(table(data2$readmitted))*100
+```
+
+also check distribution of other factors which can affect on dependant variable like age,gender,admission_source
+```{r}
+barplot(table(data2$age))
+barplot(table(data2$gender))
+barplot(table(data2$admission_source_id))
+barplot(table(data2$number_diagnoses))
+barplot(table(data2$admission_type_id))
+
+prop.table(table(data2$age))
+prop.table(table(data2$gender))
+prop.table(table(data2$admission_source_id))
+prop.table(table(data2$admission_type_id))
+
+```
+
+
+```{r}
+ggplot(data2, aes(x = readmitted)) + geom_bar() + facet_wrap(.~ time_in_hospital) + ggtitle("readmitted patients on the basis of time in hospital")
+
+ggplot(data2, aes(x = readmitted)) + geom_bar() + facet_wrap(.~ admission_source_id) + ggtitle("readmitted patients on the basis of admission source")
+
+ggplot(data2, aes(x = readmitted)) + geom_bar() + facet_wrap(.~ age) + ggtitle("readmitted patients on the basis of age of patient")
+
+ggplot(data2, aes(x = readmitted)) + geom_bar() + facet_wrap(.~ gender) + ggtitle("readmitted patients on the basis of gender")
+
+```
+
+
+Converting three levels of dependent variables in two levels.....
+
+```{r}
+data2$readmittedbin <- ifelse(data2 == "<30",1,0)
+```
+
+```{r}
+str(data2)
+```
+
+Factorization of remaining variables.....
+
+```{r}
+diabetes3 <- cbind(data2[c(7:13,17)], lapply(data2[c(1:6,14:16,18:44)],factor))
+head(diabetes3)
+```
+
+#  PCA(principal component Analysis)
+
+```{r}
+numeric_data <- select_if(diabetes3, is.numeric)
+numeric_data <- scale(numeric_data)
+pcaObj <- princomp(numeric_data, cor = TRUE, scores = TRUE, covmat = NULL)
+summary(pcaObj)
+print(pcaObj)
+names(pcaObj)
+plot(pcaObj)
+pcaObj$loadings
+biplot(pcaObj,cex=0.7)
+final_data <- as.data.frame(pcaObj$scores)
+```
+
+# Data partition
+
+```{r}
+set.seed(111)
+inTrain <- createDataPartition(diabetes3$readmittedbin, p=0.8, list=FALSE)
+objTrain <-diabetes3[inTrain,]
+objTest <- diabetes3[-inTrain,]
+table(objTrain$readmittedbin)
+```
+
+we appliied here logistic model as our dependent variable is of categorical type...
+
+```{r}
+logit_model <- glm(readmitted ~ time_in_hospital + num_lab_procedures + num_procedures +
+ num_medications + number_outpatient + number_emergency + number_inpatient + number_diagnoses, data = objTrain , family=binomial(link = 'logit'))
+summary(logit_model)
+par(mfrow = c(2,2))
+plot(logit_model)
+pred_logit <- predict(logit_model,objTest, type = "response")
+pred_logit <- ifelse(pred_logit > 0.5, 1, 0)
+```
+
+## due to different levels problems accuaracy,sensitivity etc. calculated using formulae....
+
+```{r}
+
+result<-as.data.frame(table(pred_logit,objTest$readmittedbin))
+
+CorrectlyPredicted <- result[1,3]+result[4,3]
+
+accuracy <-CorrectlyPredicted/nrow(objTest)
+accuracy
+
+senstivity_result<-result[4,3]/(result[2,3]+result[4,3])
+senstivity_result
+
+specificity_result<-result[1,3]/(result[3,3]+result[1,3])
+specificity_result
+```
+
+
+## Rpart Decision Tree ##
+
+R part decision Trees Prediction
+
+Prediction using three level category
+
+Training
+
+```{r}
+# rpart_tree <- rpart(formula = readmitted ~ age + discharged_to + time_in_hospital +
+ #                     num_lab_procedures+num_procedures+num_medications  +         
+ # number_outpatient + number_emergency + number_inpatient + number_diagnoses +
+ #                     insulin + change + diabetesMed + diag1 + diag2 + diag3 + A1Cresult, 
+ #                   data=train_nonbinary, method = 'class')
+# summary(rpart_tree)
+```
+
+Prediction 
+
+```{r}
+# pred_tree <- predict(rpart_tree, test_nonbinary, type="class")
+# head(pred_tree)
+```
+
+Performance
+
+```{r}
+#table(predict(rpart_tree, test_nonbinary, type="class"), test_nonbinary$readmitted)
+
+# result <- as.data.frame(table(predict(rpart_tree, test_nonbinary, type="class"), 
+#                            test_nonbinary$readmitted))
+#  result
+
+# confusionMatrix(pred_tree, test_nonbinary$readmitted)
+
+# prop.table(table(test_nonbinary$readmitted, pred_tree),1)
+```
+
+Prediction in binary format
+
+Training
+
+```{r}
+# train$readmitted <- ifelse(train$readmitted == train$readmitted[1], 0, 1)
+# test$readmitted <- ifelse(test$readmitted == test$readmitted[1], 0, 1)
+
+# rpart_tree <- rpart(formula = readmitted ~ age + discharged_to + time_in_hospital +
+#                      num_lab_procedures+num_procedures+num_medications  +         number_outpatient + number_emergency + number_inpatient + number_diagnoses +
+#                      insulin + change + diabetesMed + diag1 + diag2 + diag3 + A1Cresult, 
+#                    data=train, method = 'class')
+
+ # summary(rpart_tree)
+```
+
+Prediction
+
+```{r}
+#pred_tree <- predict(rpart_tree, test, type="class")
+
+```
+
+Performance
+
+```{r}
+#table(predict(rpart_tree, test, type = "class"), test$readmitted)
+#result <- as.data.frame(table(predict(rpart_tree, test, type = "class"), test$readmitted))
+#result
+
+#CorrectlyPredicted <- result[1, 3] + result[4, 3]
+
+#accuracy <- CorrectlyPredicted / nrow(test)
+#accuracy
+
+#senstivity_result <- result[4, 3] / (result[2, 3] + result[4, 3])
+#senstivity_result
+
+#specificity_result <- result[1, 3] / (result[3, 3] + result[1, 3])
+#specificity_result
+
+#prop.table(table(test$readmitted, pred_tree), 1)
+```
+
+
+
+
+
+
+
+
+
